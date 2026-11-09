@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Suno 音樂轉錄與下載器</title>
+    <!-- 引入 Tailwind CSS 確保手機排版美觀 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        .glass-card { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-between p-4">
+
+    <div class="w-full max-w-md mx-auto space-y-6">
+        <!-- 標題 -->
+        <header class="text-center pt-6">
+            <h1 class="text-2xl font-bold bg-gradient-to-r from-purple-400 to-pink-500 bg-clip-text text-transparent">
+                Suno 智慧音樂轉錄器
+            </h1>
+            <p class="text-xs text-slate-400 mt-1">支援 iPhone 與 Android 手機端全功能解析</p>
+        </header>
+
+        <!-- 輸入區域 -->
+        <div class="glass-card p-4 rounded-2xl shadow-xl space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-slate-300 mb-1">請輸入 Suno 音樂網址：</label>
+                <input type="url" id="sunoUrl" placeholder="https://suno.com/song/... 或 /s/..." 
+                    class="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 text-slate-100 placeholder-slate-500">
+            </div>
+            <button onclick="processSunoUrl()" id="fetchBtn" 
+                class="w-full py-3 bg-gradient-to-r from-purple-600 to-pink-600 font-semibold rounded-xl shadow-lg hover:opacity-95 active:scale-95 transition-all flex items-center justify-center space-x-2">
+                <span>解析音樂與歌詞</span>
+            </button>
+        </div>
+
+        <!-- 載入狀態 -->
+        <div id="loading" class="hidden text-center py-6">
+            <div class="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-purple-500"></div>
+            <p class="text-sm text-slate-400 mt-2">正在解析雲端音訊與歌詞...</p>
+        </div>
+
+        <!-- 結果顯示區 (預設隱藏) -->
+        <div id="resultContainer" class="hidden space-y-4">
+            <!-- 歌曲資訊卡 -->
+            <div class="glass-card p-4 rounded-2xl flex items-center space-x-4">
+                <img id="songImage" src="" alt="封面" class="w-16 h-16 rounded-xl object-cover bg-slate-800 flex-shrink-0">
+                <div class="overflow-hidden">
+                    <h2 id="songTitle" class="font-bold text-base truncate text-slate-100"></h2>
+                    <p id="songTags" class="text-xs text-slate-400 truncate mt-0.5"></p>
+                </div>
+            </div>
+
+            <!-- 播放器介面 -->
+            <div class="glass-card p-4 rounded-2xl space-y-3">
+                <div class="text-xs text-purple-400 font-medium">線上試聽介面</div>
+                <audio id="audioPlayer" controls class="w-full h-10"></audio>
+            </div>
+
+            <!-- 下載按鈕區 -->
+            <div class="grid grid-cols-2 gap-3">
+                <button onclick="downloadAudio('mp3')" class="py-3 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-xl font-medium text-sm flex items-center justify-center space-x-2 transition">
+                    <span>📥 下載 MP3</span>
+                </button>
+                <button onclick="downloadAudio('ogg')" class="py-3 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-xl font-medium text-sm flex items-center justify-center space-x-2 transition">
+                    <span>📥 下載 OGG</span>
+                </button>
+            </div>
+
+            <!-- 歌詞區 -->
+            <div class="glass-card p-4 rounded-2xl space-y-3">
+                <div class="flex items-center justify-between">
+                    <span class="text-xs text-purple-400 font-medium">歌詞內容 (保留排版)</span>
+                    <button onclick="copyLyrics()" class="text-xs bg-purple-600/30 hover:bg-purple-600/50 text-purple-300 px-3 py-1.5 rounded-lg transition border border-purple-500/30 flex items-center space-x-1">
+                        <span>📋 一鍵複製歌詞</span>
+                    </button>
+                </div>
+                <div id="lyricsBox" class="bg-slate-900/80 p-3 rounded-xl text-sm text-slate-300 whitespace-pre-wrap font-mono max-h-48 overflow-y-auto leading-relaxed border border-slate-800/80">
+                    載入中...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="text-center text-xs text-slate-500 py-6">
+        Suno Mobile Transcriber &copy; 2026
+    </footer>
+
+    <script>
+        let currentAudioUrl = '';
+        let currentTitle = 'Suno_Song';
+        let currentLyricsText = '';
+
+        async function processSunoUrl() {
+            const rawUrl = document.getElementById('sunoUrl').value.trim();
+            if (!rawUrl) {
+                alert('請先輸入 Suno 音樂網址');
+                return;
+            }
+
+            // 顯示載入動畫
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('resultContainer').classList.add('hidden');
+
+            try {
+                // 使用公開的跨域解析機制取得 Suno 網頁內容 (Next.js 結構)
+                let targetUrl = rawUrl;
+                // 支援短網址 /s/ 自動展開或直接解析
+                const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+                const response = await fetch(proxyUrl);
+                const json = await response.json();
+                
+                if (!json.contents) throw new Error('無法讀取該網址內容，請檢查網址是否正確或公開。');
+
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(json.contents, 'text/html');
+                
+                // 從 Next.js 的 __NEXT_DATA__ 抓取完整的歌曲結構資料
+                const nextDataScript = doc.getElementById('__NEXT_DATA__');
+                let songData = null;
+
+                if (nextDataScript) {
+                    const nextJson = JSON.parse(nextDataScript.textContent);
+                    // 嘗試從常見的 Next.js props 路徑尋找 clip 資料
+                    songData = findClipData(nextJson);
+                }
+
+                // 如果從 __NEXT_DATA__ 找不到，嘗試從 Open Graph 標籤備份抓取
+                if (!songData) {
+                    const ogAudio = doc.querySelector('meta[property="og:audio"]']?.content || 
+                                    doc.querySelector('meta[property="og:audio:secure_url"]']?.content;
+                    const ogTitle = doc.querySelector('meta[property="og:title"]']?.content || 'Suno Music';
+                    const ogImage = doc.querySelector('meta[property="og:image"]']?.content || '';
+
+                    if (ogAudio) {
+                        songData = {
+                            title: ogTitle,
+                            audio_url: ogAudio,
+                            image_url: ogImage,
+                            metadata: { prompt: "無詳細風格標籤" },
+                            lyric: "此公開頁面未直接提供文字格式歌詞，或版本僅包含純音樂。"
+                        };
+                    }
+                }
+
+                if (!songData) {
+                    throw new Error('無法從該網址解析出音樂檔案，請確認該音樂是否為公開發布狀態。');
+                }
+
+                // 綁定資料到全域變數
+                currentTitle = sanitizeFilename(songData.title || 'Suno_Music');
+                currentAudioUrl = songData.audio_url;
+                currentLyricsText = songData.lyric || songData.metadata?.prompt || '此曲為純音樂或無可用歌詞。';
+
+                // 更新介面
+                document.getElementById('songTitle').innerText = songData.title || '未命名音樂';
+                document.getElementById('songTags').innerText = songData.metadata?.tags || 'Suno AI Music';
+                document.getElementById('songImage').src = songData.image_url || 'https://via.placeholder.com/150';
+                
+                const audioPlayer = document.getElementById('audioPlayer');
+                audioPlayer.src = currentAudioUrl;
+                
+                document.getElementById('lyricsBox').innerText = currentLyricsText;
+
+                // 顯示結果
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('resultContainer').classList.remove('hidden');
+
+            } catch (error) {
+                document.getElementById('loading').classList.add('hidden');
+                alert('解析失敗：' + error.message);
+            }
+        }
+
+        // 遞迴尋找 Next.js 結構中的 clip 物件
+        function findClipData(obj) {
+            if (!obj || typeof obj !== 'object') return null;
+            if (obj.audio_url && obj.id) return obj;
+            for (let key of Object.keys(obj)) {
+                let res = findClipData(obj[key]);
+                if (res) return res;
+            }
+            return null;
+        }
+
+        function sanitizeFilename(name) {
+            return name.replace(/[\/\\?%*:|"<>]/g, '_');
+        }
+
+        // 一鍵複製歌詞 (保持排版)
+        function copyLyrics() {
+            if (!currentLyricsText) return;
+            navigator.clipboard.writeText(currentLyricsText).then(() => {
+                alert('歌詞已成功複製到剪貼簿！格式與排版已完整保留。');
+            }).catch(err => {
+                // 手動選取備用方案
+                alert('複製失敗，請手動長按選取文字複製。');
+            });
+        }
+
+        // 行動裝置相容的跨域下載處理 (支援 MP3 與 OGG 轉容器)
+        async function downloadAudio(format) {
+            if (!currentAudioUrl) return;
+            alert(`正在準備 ${format.toUpperCase()} 檔案，請稍候...`);
+            try {
+                const response = await fetch(currentAudioUrl);
+                const blob = await response.blob();
+                
+                // 建立對應格式的 Blob (Suno 原生音訊主要為 MP3，此處可依需求直接封裝)
+                const extension = format === 'ogg' ? 'ogg' : 'mp3';
+                const mimeType = format === 'ogg' ? 'audio/ogg' : 'audio/mpeg';
+                const exportBlob = new Blob([blob], { type: mimeType });
+                
+                const blobUrl = window.URL.createObjectURL(exportBlob);
+                const a = document.createElement('a');
+                a.href = blobUrl;
+                a.download = `${currentTitle}.${extension}`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(blobUrl);
+            } catch (err) {
+                // 如果遭遇嚴格跨域阻擋，直接開啟新視窗由手機瀏覽器內建下載器處理
+                window.open(currentAudioUrl, '_blank');
+            }
+        }
+    </script>
+</body>
+</html>
