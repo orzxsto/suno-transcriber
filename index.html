@@ -18,7 +18,7 @@
             <h1 class="text-3xl font-extrabold text-amber-400 tracking-wide">
                 Suno 音樂轉錄器
             </h1>
-            <p class="text-base text-slate-300 mt-2 font-medium">📱 手機端直接解析．大字體易讀版</p>
+            <p class="text-base text-slate-300 mt-2 font-medium">📱 手機端智慧解析．大字體易讀版</p>
         </header>
 
         <!-- 輸入區域 (老花友善大輸入框與大按鈕) -->
@@ -34,10 +34,11 @@
             </button>
         </div>
 
-        <!-- 載入與狀態顯示區 (大字體) -->
-        <div id="loading" class="hidden text-center py-6">
-            <div class="inline-block animate-spin rounded-full h-10 w-10 border-t-4 border-b-4 border-amber-400"></div>
-            <p id="statusMsg" class="text-lg font-semibold text-amber-300 mt-3">手機本地運算解析中...</p>
+        <!-- 載入與狀態顯示區 (大字體與即時代理顯示) -->
+        <div id="loading" class="hidden text-center py-6 glass-card rounded-2xl p-6 border border-amber-500/30">
+            <div class="inline-block animate-spin rounded-full h-12 w-12 border-t-4 border-b-4 border-amber-400"></div>
+            <p id="statusMsg" class="text-xl font-bold text-amber-300 mt-4">準備進行解析...</p>
+            <p id="subStatusMsg" class="text-base text-slate-300 mt-2 font-mono">請稍候...</p>
         </div>
 
         <!-- 結果顯示區 (大字體) -->
@@ -238,6 +239,239 @@
                 window.URL.revokeObjectURL(blobUrl);
             } catch (err) {
                 // 手機安全權限限制時，直接開啟視窗觸發下載
+                window.open(currentAudioUrl, '_blank');
+            }
+        }
+    </script>
+</body>
+</html>
+    <footer class="text-center text-sm text-slate-400 py-6 font-medium space-y-1">
+        <div>Suno Mobile Transcriber &copy; 2026</div>
+        <div class="text-xs text-amber-400/80 font-mono bg-slate-900/80 inline-block px-3 py-1 rounded-full border border-slate-800">
+            版本號: v2.1.0-Build20261109 (5-Proxy Auto-Fallback)
+        </div>
+    </footer>
+
+    <script>
+        let currentAudioUrl = '';
+        let currentTitle = 'Suno_Song';
+        let currentLyricsText = '';
+
+        // 提取標準 Suno 音樂 URL 中的 36 位元 UUID (Song ID)
+        function extractSongUUID(urlStr) {
+            if (!urlStr) return null;
+            const uuidRegex = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+            const match = urlStr.match(uuidRegex);
+            return match ? match[0] : null;
+        }
+
+        // 嘗試載入 URL 驗證音訊檔案是否存在
+        function verifyAudioUrl(url) {
+            return new Promise((resolve) => {
+                const audio = new Audio();
+                audio.src = url;
+                audio.oncanplaythrough = () => resolve(true);
+                audio.onerror = () => resolve(false);
+                setTimeout(() => resolve(false), 5000); // 5秒超時
+            });
+        }
+
+        async function processSunoUrl() {
+            const inputUrl = document.getElementById('sunoUrl').value.trim();
+            if (!inputUrl) {
+                alert('請先輸入 Suno 音樂網址！');
+                return;
+            }
+
+            const songId = extractSongUUID(inputUrl);
+            if (!songId) {
+                alert('無效的 Suno 音樂網址！請確保輸入格式包含 /song/... 及完整 ID');
+                return;
+            }
+
+            const loading = document.getElementById('loading');
+            const resultContainer = document.getElementById('resultContainer');
+            const statusMsg = document.getElementById('statusMsg');
+            const subStatusMsg = document.getElementById('subStatusMsg');
+            const fetchBtn = document.getElementById('fetchBtn');
+
+            // 隱藏前一次結果並顯示讀取狀態
+            resultContainer.classList.add('hidden');
+            loading.classList.remove('hidden');
+            fetchBtn.disabled = true;
+
+            let songData = null;
+            let successSource = '';
+
+            // 5 組備援代理設定
+            const proxies = [
+                {
+                    name: "Proxy 1 (AllOrigins API)",
+                    fetch: async () => {
+                        const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(`https://cdn1.suno.ai/api/external/song/${songId}/`)}`);
+                        if (!res.ok) throw new Error("HTTP error " + res.status);
+                        const json = await res.json();
+                        return JSON.parse(json.contents);
+                    }
+                },
+                {
+                    name: "Proxy 2 (CorsProxy.io)",
+                    fetch: async () => {
+                        const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(`https://cdn1.suno.ai/api/external/song/${songId}/`)}`);
+                        if (!res.ok) throw new Error("HTTP error " + res.status);
+                        return await res.json();
+                    }
+                },
+                {
+                    name: "Proxy 3 (CodeTabs Proxy)",
+                    fetch: async () => {
+                        const res = await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://cdn1.suno.ai/api/external/song/${songId}/`)}`);
+                        if (!res.ok) throw new Error("HTTP error " + res.status);
+                        return await res.json();
+                    }
+                },
+                {
+                    name: "Proxy 4 (ThingProxy)",
+                    fetch: async () => {
+                        const res = await fetch(`https://thingproxy.freeboard.io/fetch/${encodeURIComponent(`https://cdn1.suno.ai/api/external/song/${songId}/`)}`);
+                        if (!res.ok) throw new Error("HTTP error " + res.status);
+                        return await res.json();
+                    }
+                },
+                {
+                    name: "Proxy 5 (Suno CDN Direct)",
+                    fetch: async () => {
+                        const res = await fetch(`https://cdn1.suno.ai/api/external/song/${songId}/`, { mode: 'cors' });
+                        if (!res.ok) throw new Error("HTTP error " + res.status);
+                        return await res.json();
+                    }
+                }
+            ];
+
+            // 1. 輪流嘗試所有備援代理服務
+            for (let i = 0; i < proxies.length; i++) {
+                const proxy = proxies[i];
+                statusMsg.innerText = `正在解析中... (${i + 1}/${proxies.length})`;
+                subStatusMsg.innerText = `呼叫代理: ${proxy.name}`;
+
+                try {
+                    const data = await proxy.fetch();
+                    if (data && (data.audio_url || data.id)) {
+                        songData = {
+                            title: data.title || '未命名音樂',
+                            audio_url: data.audio_url || `https://cdn1.suno.ai/${songId}.mp3`,
+                            image_url: data.image_large_url || data.image_url || `https://cdn1.suno.ai/image_${songId}.png`,
+                            lyric: data.metadata?.prompt || '此曲為純音樂或無公開歌詞記錄。',
+                            tags: data.metadata?.tags || 'Suno AI Music'
+                        };
+                        successSource = proxy.name;
+                        break; // 成功解析即跳出迴圈
+                    }
+                } catch (e) {
+                    console.warn(`${proxy.name} 失敗:`, e.message);
+                }
+            }
+
+            // 2. 若所有代理皆失敗，最後嘗試手機端本機計算 CDN 驗證
+            if (!songData) {
+                statusMsg.innerText = `代理皆失敗，嘗試手機端本機驗證...`;
+                subStatusMsg.innerText = `正在測試 Suno 原生 CDN 連線...`;
+
+                const fallbackAudioUrl = `https://cdn1.suno.ai/${songId}.mp3`;
+                const isValidAudio = await verifyAudioUrl(fallbackAudioUrl);
+
+                if (isValidAudio) {
+                    songData = {
+                        title: `Suno_Music_${songId.substring(0, 8)}`,
+                        audio_url: fallbackAudioUrl,
+                        image_url: `https://cdn1.suno.ai/image_${songId}.png`,
+                        lyric: '提示：本機已直接調用 Suno 音訊節點。由於代理被阻擋，未獲取到文字歌詞資料。',
+                        tags: 'Suno AI Music (Direct Connect)'
+                    };
+                    successSource = "手機本地端直連驗證";
+                }
+            }
+
+            loading.classList.add('hidden');
+            fetchBtn.disabled = false;
+
+            // 3. 檢查最終結果：若全部失敗，絕對不列出後續播放器與下載介面！
+            if (songData && songData.audio_url) {
+                currentTitle = sanitizeFilename(songData.title || 'Suno_Music');
+                currentAudioUrl = songData.audio_url;
+                currentLyricsText = songData.lyric || '無可用歌詞。';
+
+                document.getElementById('songTitle').innerText = songData.title;
+                document.getElementById('songTags').innerText = `${songData.tags} (${successSource})`;
+                document.getElementById('songImage').src = songData.image_url;
+                document.getElementById('songImage').onerror = function() {
+                    this.src = 'https://placehold.co/150x150/1e293b/amber?text=Suno+Music';
+                };
+
+                const audioPlayer = document.getElementById('audioPlayer');
+                audioPlayer.src = currentAudioUrl;
+
+                document.getElementById('lyricsBox').innerText = currentLyricsText;
+
+                // 成功才顯示結果區塊
+                resultContainer.classList.remove('hidden');
+            } else {
+                // 完全失敗時隱藏介面並明確提示
+                resultContainer.classList.add('hidden');
+                alert(`❌ 解析完全失敗！\n\n原因：已嘗試 5 組跨域代理 API 與本機 CDN 直連，均無法獲取音樂檔案。\n\n建議：\n1. 請確認該 Suno 音樂為「公開發布」狀態。\n2. 請檢查網路狀態或嘗試切換 Wi-Fi / 4G/5G 網路後再試。`);
+            }
+        }
+
+        function sanitizeFilename(name) {
+            return name.replace(/[\/\\?%*:|"<>]/g, '_');
+        }
+
+        function copyLyrics() {
+            if (!currentLyricsText) return;
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(currentLyricsText).then(() => {
+                    alert('歌詞已成功複製到剪貼簿！');
+                }).catch(() => fallbackCopy());
+            } else {
+                fallbackCopy();
+            }
+        }
+
+        function fallbackCopy() {
+            const textArea = document.createElement("textarea");
+            textArea.value = currentLyricsText;
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            try {
+                document.execCommand('copy');
+                alert('歌詞已成功複製到剪貼簿！');
+            } catch (err) {
+                alert('複製失敗，請手動選取文字複製。');
+            }
+            document.body.removeChild(textArea);
+        }
+
+        async function downloadAudio(format) {
+            if (!currentAudioUrl) return;
+            alert(`正在下載 ${format.toUpperCase()} 檔案...`);
+            try {
+                const response = await fetch(currentAudioUrl);
+                const blob = await response.blob();
+                
+                const mimeType = format === 'ogg' ? 'audio/ogg' : 'audio/mpeg';
+                const extension = format === 'ogg' ? 'ogg' : 'mp3';
+                const exportBlob = new Blob([blob], { type: mimeType });
+                
+                const blobUrl = window.URL.createObjectURL(exportBlob);
+                const a = document.createElement('a');
+                a.href = blobUrl;
+                a.download = `${currentTitle}.${extension}`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(blobUrl);
+            } catch (err) {
                 window.open(currentAudioUrl, '_blank');
             }
         }
