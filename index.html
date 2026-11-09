@@ -91,30 +91,38 @@
         let currentTitle = 'Suno_Song';
         let currentLyricsText = '';
 
-        // 帶備援機制的跨域 HTML/API 擷取器
+        // 升級版：支援多重代理服務，確保在 Android 手機 Chrome 順利連線
         async function fetchWithProxy(url) {
-            const proxies = [
-                `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-                `https://corsproxy.io/?${encodeURIComponent(url)}`
+            const encodedUrl = encodeURIComponent(url);
+            
+            // 4 種不同的代理 API 備援清單
+            const proxyConfigs = [
+                { url: `https://api.allorigins.win/get?url=${encodedUrl}`, type: 'json' },
+                { url: `https://api.codetabs.com/v1/proxy?quest=${encodedUrl}`, type: 'text' },
+                { url: `https://corsproxy.io/?${encodedUrl}`, type: 'text' },
+                { url: `https://thingproxy.freeboard.io/fetch/${url}`, type: 'text' }
             ];
 
-            for (const proxy of proxies) {
+            let lastError = null;
+
+            for (const proxy of proxyConfigs) {
                 try {
-                    const res = await fetch(proxy, { cache: 'no-cache' });
+                    const res = await fetch(proxy.url, { cache: 'no-cache' });
                     if (!res.ok) continue;
 
-                    if (proxy.includes('allorigins')) {
+                    if (proxy.type === 'json') {
                         const json = await res.json();
                         if (json.contents) return json.contents;
                     } else {
                         const text = await res.text();
-                        if (text) return text;
+                        if (text && text.trim().length > 0) return text;
                     }
                 } catch (e) {
-                    console.warn('代理連線 failure:', proxy, e);
+                    console.warn('代理連線失敗:', proxy.url, e);
+                    lastError = e;
                 }
             }
-            throw new Error('網路請求失敗，請檢查網路連線或稍後再試。');
+            throw new Error('所有備用網路節點皆連線失敗，請稍候重試或檢查網路。');
         }
 
         async function processSunoUrl() {
@@ -132,26 +140,30 @@
             loading.classList.remove('hidden');
             resultContainer.classList.add('hidden');
             fetchBtn.disabled = true;
-            statusMsg.innerText = '正在讀取 Suno 音樂資訊...';
+            statusMsg.innerText = '正在解析網址與 UUID...';
 
             try {
                 let clipId = extractClipId(inputUrl);
                 let songData = null;
 
-                // 情況 A：如果無法從網址提取 UUID，說明可能是 /s/ 短網址，需先抓取網頁內容分析跳轉
-                if (!clipId) {
-                    statusMsg.innerText = '正在解析短網址...';
+                // 情況 1：若輸入的是 /s/ 短網址，先抓取頁面追蹤真實的 /song/ UUID
+                if (!clipId && inputUrl.includes('/s/')) {
+                    statusMsg.innerText = '正在自動追蹤短網址...';
                     const htmlContent = await fetchWithProxy(inputUrl);
-                    clipId = extractClipIdFromHtml(htmlContent);
+                    clipId = extractClipId(htmlContent);
+                    if (!songData) {
+                        songData = parseHtmlContent(htmlContent);
+                    }
                 }
 
-                // 情況 B：成功抓到 Clip ID 後，嘗試直接調用 Suno CDN / API 資料
-                if (clipId) {
-                    statusMsg.innerText = '嘗試獲取音訊與歌詞...';
+                // 情況 2：已取得 Clip ID，嘗試呼叫 Suno 官方 CDN API
+                if (clipId && (!songData || !songData.audio_url)) {
+                    statusMsg.innerText = '正在取得官方音訊與歌詞...';
                     try {
                         const apiUrl = `https://cdn1.suno.ai/api/external/song/${clipId}/`;
                         const apiRes = await fetchWithProxy(apiUrl);
-                        const data = JSON.parse(apiRes);
+                        const data = (typeof apiRes === 'string') ? JSON.parse(apiRes) : apiRes;
+                        
                         if (data && (data.audio_url || data.id)) {
                             songData = {
                                 title: data.title || '未命名音樂',
@@ -162,19 +174,19 @@
                             };
                         }
                     } catch (e) {
-                        console.log('Direct API failed, fallback to HTML parsing.');
+                        console.log('API Direct Fetch Fail, Switching to Page Parsing');
                     }
                 }
 
-                // 情況 C：若 API 未取到，則備援解析全頁 HTML
-                if (!songData) {
-                    statusMsg.innerText = '正在擷取網頁內嵌資料...';
+                // 情況 3：最終備援：若仍未抓到，再次請求全頁面 HTML 解析
+                if (!songData || !songData.audio_url) {
+                    statusMsg.innerText = '正在嘗試後備頁面解析...';
                     const htmlContent = await fetchWithProxy(inputUrl);
                     songData = parseHtmlContent(htmlContent);
                 }
 
                 if (!songData || !songData.audio_url) {
-                    throw new Error('找不到音訊連結，請確認該歌曲是否設定為公開！');
+                    throw new Error('無法找到歌曲或音訊，請確認該歌曲已在 Suno 上設為公開！');
                 }
 
                 // 更新資料與 UI
@@ -202,23 +214,20 @@
             }
         }
 
-        // 從網址中提取 UUID (clip_id)
-        function extractClipId(url) {
+        // 從字串/網址中尋找 36 位元的 UUID 格式
+        function extractClipId(str) {
+            if (!str) return null;
             const uuidRegex = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
-            const match = url.match(uuidRegex);
+            const match = str.match(uuidRegex);
             return match ? match[0] : null;
         }
 
-        // 從 HTML 文字中搜尋 UUID
-        function extractClipIdFromHtml(html) {
-            return extractClipId(html);
-        }
-
-        // HTML 解析備用方案
         function parseHtmlContent(htmlStr) {
+            if (!htmlStr) return null;
             const parser = new DOMParser();
             const doc = parser.parseFromString(htmlStr, 'text/html');
 
+            // 從 JSON 結構中抽取
             const nextDataScript = doc.getElementById('__NEXT_DATA__');
             if (nextDataScript) {
                 try {
@@ -247,7 +256,7 @@
                     title: ogTitle,
                     audio_url: ogAudio,
                     image_url: ogImage,
-                    lyric: '網頁標籤中無法直接擷取完整歌詞，請嘗試輸入完整 song 頁面網址。',
+                    lyric: '提示：短網址未能直接載入全文歌詞，如需完整歌詞請複製 full URL (/song/...) 嘗試。',
                     tags: 'Suno AI Music'
                 };
             }
@@ -256,7 +265,7 @@
 
         function findClipData(obj) {
             if (!obj || typeof obj !== 'object') return null;
-            if (obj.audio_url && obj.id) return obj;
+            if (obj.audio_url && (obj.id || obj.clip_id)) return obj;
             for (let key of Object.keys(obj)) {
                 let res = findClipData(obj[key]);
                 if (res) return res;
@@ -296,7 +305,7 @@
 
         async function downloadAudio(format) {
             if (!currentAudioUrl) return;
-            alert(`正在下載 ${format.toUpperCase()} 檔案，請稍候...`);
+            alert(`正在準備下載 ${format.toUpperCase()} 檔案...`);
             try {
                 const response = await fetch(currentAudioUrl);
                 const blob = await response.blob();
@@ -314,6 +323,7 @@
                 document.body.removeChild(a);
                 window.URL.revokeObjectURL(blobUrl);
             } catch (err) {
+                // 如果遭遇 Safari / Chrome 檔案儲存權限阻擋，自動跳轉另開連結下載
                 window.open(currentAudioUrl, '_blank');
             }
         }
